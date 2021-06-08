@@ -1,0 +1,457 @@
+---
+title: "Estudi dels vins portuguesos “Vinho Verde” segons les seves característiques físico-químiques"
+subtitle: "Tipologia i cicle de vida de les dades - Pràctica 2"
+author: "Héctor Gutiérrez Muñoz"
+date: "5 de juny, 2021"
+output:
+  pdf_document:
+    toc: yes
+    number_sections: true
+toc-title: "Sumari"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load_libraries, include=FALSE}
+library(plyr)
+library(ggplot2)
+library(kableExtra)
+library(reshape2)
+library(corrplot)
+```
+
+# Càrrega dels fitxers
+
+En primer lloc, carreguem els dos fitxers.
+
+```{r,eval=TRUE,echo=TRUE}
+
+blancs_data <- read.csv("wineQualityWhites.csv")
+negres_data <- read.csv("wineQualityReds.csv")
+
+```
+
+Comprovem que les dades es llegeixen amb els tipus correctes i que no hi ha valors estranys
+o errors de codificació:
+
+```{r,eval=TRUE,echo=TRUE}
+
+# Comencem pels vins blancs
+
+str(blancs_data)
+
+summary(blancs_data)
+
+# A continuació els de negres
+
+str(negres_data)
+
+summary(negres_data)
+
+```
+
+Veiem que tots els tipus són els esperats i que no hi ha cap valor estrany o que 
+no s'hagi llegit correctament. Veiem que tampoc no hi ha cap valor desconegut o NA.
+
+# Integració dels datasets
+
+A continuació hem d'integrar els dos fitxers en un sol dataset. Crearem una nova variable
+que indiqui el color del vi i eliminarem la columna autoincremental que no ens aporta cap
+informació.
+
+```{r,eval=TRUE,echo=TRUE}
+
+blancs_data$X <- NULL
+blancs_data$color <- "blanc"
+
+negres_data$X <- NULL
+negres_data$color <- "negre"
+
+vins_data <- rbind(blancs_data, negres_data)
+
+```
+
+El dataset final sobre el qual treballarem és el següent:
+
+```{r,eval=TRUE,echo=TRUE}
+
+kable(rbind(
+  head(vins_data[vins_data$color == "blanc",],3),
+  head(vins_data[vins_data$color == "negre",],3)
+), 
+  format = 'latex', 
+  booktabs = TRUE, 
+  row.names = FALSE) %>%
+ kableExtra::kable_styling(latex_options = c("scale_down", "hold_position"))
+
+```
+
+# Neteja de les dades
+
+Pel que fa als valors desconeguts o NA no hem de fer res, ja que abans, amb els "summary" ja hem
+vist que totes les dades estan omplertes. A la variable del àcid cítric hi ha registres amb valor 0,
+però són observacions vàlides: com podem veure al boxplot, els valors típics de àcid cítric a un vi
+són baixos i així, no és rar que en alguns casos no n'hi hagi res i l'observació sigui 0.
+
+```{r,eval=TRUE,echo=TRUE}
+
+boxplot(vins_data$citric.acid, horizontal = TRUE, xlab=c("citric.acid"))
+
+```
+
+Així doncs, aquesta etapa de neteja es reduirà a estudiar els valors extrems
+o outliers, que ja podem apreciar que sí existeixen al boxplot anterior. Es presenten
+a continuació els boxplots de les variables explicatives:
+
+```{r,eval=TRUE,echo=TRUE}
+
+p <- ggplot(data = melt(vins_data[,c(1:6)]), aes(x=variable, y=value)) + 
+  geom_boxplot() + 
+  xlab("eix x") + 
+  ylab("eix y")
+p + facet_wrap( ~ variable, scales="free")
+
+p <- ggplot(data = melt(vins_data[,c(7:11)]), aes(x=variable, y=value)) + 
+  geom_boxplot() + 
+  xlab("eix x") + 
+  ylab("eix y")
+p + facet_wrap( ~ variable, scales="free")
+
+```
+
+Podem apreciar que en tots els casos sí que hi ha valors extrems (els punts que hi ha a sobre
+o a baix de les caixes i els bigotis), però que tots aquests valors extrems són observacions
+vàlides que no difereixen gaire de la resta, i que per tant, hem de considerar a l'hora de
+construir els nostres models o analitzar les dades. Fins i tot en els casos en què hi ha
+un punt més lluny de la resta, com ara la densitat, el sucre residual o el sulfur lliure,
+no és una diferència prou gran com per haver d'excloure'ls. 
+
+A la variable qualitat, la variable que més endavant volem predir en funció de la resta, passa
+el mateix: 
+
+```{r,eval=TRUE,echo=TRUE}
+
+boxplot(vins_data$quality, horizontal = TRUE, xlab=c("quality"))
+kable(t(table(vins_data$quality)), 
+  format = 'latex', 
+  booktabs = TRUE) %>%
+  kableExtra::kable_styling(latex_options = c("hold_position"))
+
+```
+
+Sí que hi ha valors extrems, 30 vins puntuats amb un 3, 193 amb un 8 i 5 amb un 9. Però 
+és clar que aquestes dades també les hem de fer servir per construir el model, ja que són
+completament vàlides i treure-les-en no aportaria cap guany a la qualitat del model.
+
+# Anàlisi de les dades
+
+## Separació de la mostra pels contrastos d'hipòtesis
+
+Començarem la part d'anàlisi comprovant si alguns mites sobre les diferències entre
+els vins blancs i els de negres són veritat o són només llegendes urbanes. Per fer això,
+en primer lloc haurem de separar la mostra en dues, segons el color del vi:
+
+```{r,eval=TRUE,echo=TRUE}
+
+vins_blancs_data <- vins_data[vins_data$color == "blanc", ]
+vins_negres_data <- vins_data[vins_data$color == "negre", ]
+
+```
+
+## Normalitat i homoscedasticitat
+
+Les dues submostres tenen més de 30 observacions, com ja hem vist abans. Així, pel teorema
+del límit central, podem suposar la normalitat en totes dues.
+
+Pel que fa a l'homoscedasticitat (homogeneïtat de variàncies), haurem de comprovar-ho amb un
+test d'igualtat de variàncies. Concretament, necessitarem saber si la distribució de la variable
+alcohol presenta homoscedasticitat en els dos grups per triar el test correcte més endavant. 
+
+```{r,eval=TRUE,echo=TRUE}
+
+var.test(vins_blancs_data[,"alcohol"], vins_negres_data[,"alcohol"], conf.level = 0.95)
+
+```
+
+Veiem que el p-valor està tocant el 0 i per això hem de rebutjar la hipòtesi nul·la que
+les dues variàncies són iguals: ens trobem a una situació d'heteroscedasticitat. No necessitarem
+fer aquesta comparació per a cap variable més. 
+
+## Comparació del percentatge d'alcohol entre els vins blancs i els vins negres
+
+Hi ha una creença molt estesa: els vins negres tenen més alcohol que els vins blancs, la qual
+cosa s'associa a que són més forts, tenen més anys de fermentació, etc. Veurem si aquesta creença
+és veritat o no. Per comprovar-ho farem servir un test d'igualtat de mitjanes, però tenint en compte
+que les variàncies no són iguals. 
+
+En primer lloc, representem gràficament la situació:
+
+```{r,eval=TRUE,echo=TRUE}
+
+ggplot(vins_data,aes(x=alcohol)) + 
+  geom_histogram(binwidth = 0.5) + 
+  facet_grid(~color) + 
+  theme_bw()
+
+```
+
+Les dues distribucions dels continguts d'alcohol són molt semblants excepte per uns valors 
+molt alts en els vins negres, cosa que ens pot fer pensar que realment no hi ha cap diferència. 
+
+Un cop comprovat això, fem el test:
+
+```{r,eval=TRUE,echo=TRUE}
+
+t.test(vins_negres_data$alcohol, 
+       vins_blancs_data$alcohol, 
+       alternative="greater", 
+       var.equal=FALSE)
+
+```
+
+En aquest test, la hipòtesi nul·la és que les mitjanes són les mateixes i l'alternativa
+és que la mitjana d'alcohol dels vins negres és més gran que la dels de blancs. Com que
+el p-valor està tocant l'1, no podem rebutjar la hipòtesi nul·la, així que hem de concloure
+que això que els vins negres tenen més alcohol és només una llegenda urbana, almenys en
+els vins "Vinho Verde".
+
+## Comparació de la excel·lència dels vins blancs i els vins negres
+
+També és interessant comprovar si hi ha diferències entre la qualitat dels vins blancs i 
+negres. En aquest cas, un test d'igualtat de mitjanes no aporta molta informació, ja que
+hi ha vins bons i dolents de tots dos colors. Serà molt més interessant comprovar si hi ha una diferència en la proporció de vins excel·lents
+sobre el total de vins de cada color.
+
+Comencem veient la distribució de les puntuacions dels vins de cada color:
+
+```{r,eval=TRUE,echo=TRUE}
+
+ggplot(vins_data,aes(x=quality)) + 
+  geom_histogram(binwidth = 1) + 
+  facet_grid(~color) + 
+  theme_bw()
+
+```
+
+En tots dos casos el nombre de vins amb puntuacions elevades és molt petit, sembla que hi ha
+més casos als vins blancs.
+
+Com que no hi ha vins puntuats amb un 10 a la mostra, definirem que un vi és excel·lent
+si ha estat puntuat amb un 8 o un 9. Desarem això a una nova variable:
+
+```{r,eval=TRUE,echo=TRUE}
+
+vins_negres_data$excelent <- vins_negres_data$quality >= 8
+vins_blancs_data$excelent <- vins_blancs_data$quality >= 8
+
+```
+
+En aquest cas, no importa si ens trobem a una situació d'heteroscedasticitat o d'homoscedasticitat, 
+que les dues mostres siguin grans, com és el cas, és suficient. 
+
+Veiem ara quines són les proporcions mostrals:
+
+```{r,eval=TRUE,echo=TRUE}
+
+p_negres <- sum(vins_negres_data$excelent)/length(vins_negres_data$excelent)
+p_blancs <- sum(vins_blancs_data$excelent)/length(vins_blancs_data$excelent)
+
+kable(cbind(p_negres, p_blancs), 
+  format = 'latex', 
+  booktabs = TRUE) %>%
+  kableExtra::kable_styling(latex_options = c("hold_position"))
+
+```
+
+La proporció de vins excel·lents veiem que és superior en els vins blancs: analitzarem si aquesta
+diferència és significativa o no. Així, el test sobre les proporcions tindrà com a hipòtesi nul·la que la proporció de vins
+excel·lents de cada color és la mateixa, i com a hipòtesi alternativa que la proporció en els vins blancs sigui superior. 
+
+```{r,eval=TRUE,echo=TRUE}
+
+prop.test(c(sum(vins_blancs_data$excelent), sum(vins_negres_data$excelent)),
+          c(length(vins_blancs_data$excelent), length(vins_negres_data$excelent)),
+          alternative = "greater",
+          correct = FALSE)
+
+
+```
+
+Com que el p-valor està tocant el 0, rebutjem la hipòtesi nul·la i podem concloure que
+la proporció de vins blancs excel·lents és significativament superior a la de vins excel·lents negres
+en els vins "Vinho Verde".
+
+## Model predictiu per la qualitat dels vins
+
+Finalment, intentarem desenvolupar un model de regressió lineal múltiple que ens permeti calcular la qualitat
+dels vins. Com que ja hem vist que hi ha diferències entre els vins blancs i negres, sobretot
+pel que fa a la qualitat, en realitat desenvoluparem dos models, un per a cada color de vi.
+
+Comencem per comprovar la correlació de les variables amb la qualitat:
+
+```{r,eval=TRUE,echo=TRUE}
+
+# Vins negres
+
+corrplot(cor(vins_negres_data[,c(1:12)]), 
+         type = "upper", order = "hclust", tl.col = "black", tl.srt = 45)
+
+cor(vins_negres_data[,c(1:12)])[, "quality"]
+
+```
+
+En els vins negres, trobem les correlacions més fortes amb l'alcohol, l'acidesa volàtil,
+els sulfats i l'àcid cítric, de les quals totes són positives menys l'acidesa.
+
+```{r,eval=TRUE,echo=TRUE}
+
+# Vins blancs
+
+corrplot(cor(vins_blancs_data[,c(1:12)]), 
+         type = "upper", order = "hclust", tl.col = "black", tl.srt = 45)
+
+cor(vins_blancs_data[,c(1:12)])[, "quality"]
+
+```
+
+Pel que fa als vins blancs, la correlació més forta és també amb l'alcohol i positiva, però
+la següent és ara la densitat, negativa. Menys rellevància tenen els clorurs, l'acidesa volàtil
+i el diòxid de sulfur total, totes tres negatives.
+
+Per desenvolupar els models, comencem per dividir els dos datasets en dues parts:
+una per construir el model i una segona de test. Ho farem de la forma estàndard,
+dos terços per desenvolupar-lo i un terç per provar-lo, amb la divisió aleatòria.
+
+```{r,eval=TRUE,echo=TRUE}
+
+indexes_blanc <- sample(1:nrow(vins_blancs_data), 
+                        size = floor((2/3)*nrow(vins_blancs_data)))
+indexes_negre <- sample(1:nrow(vins_negres_data), 
+                        size = floor((2/3)*nrow(vins_negres_data)))
+
+vins_blancs_data_train <- vins_blancs_data[indexes_blanc, ]
+vins_blancs_data_test <- vins_blancs_data[-indexes_blanc, ]
+
+vins_negres_data_train <- vins_negres_data[indexes_negre, ]
+vins_negres_data_test <- vins_negres_data[-indexes_negre, ]
+
+
+```
+
+En primer lloc, fem models amb aquestes variables amb més correlació:
+
+```{r,eval=TRUE,echo=TRUE}
+
+# Vins negres
+
+mod1n <- lm(quality ~ alcohol + volatile.acidity + sulphates + citric.acid,
+   data = vins_negres_data_train)
+
+summary(mod1n)
+
+# Vins blancs
+
+mod1b <- lm(quality ~ alcohol + density + chlorides + volatile.acidity + total.sulfur.dioxide,
+   data = vins_blancs_data_train)
+
+summary(mod1b)
+
+```
+
+Veiem que tots dos models tenen un valor $R^2$ molt baix, però hem de tenir en compte que
+estem treballant amb una variable com és la puntuació d'un vi que també té un component
+subjectiu molt gran i per tant una variabilitat alta que és difícil d'explicar. Això es
+confirma si fem la prova d'afegir la resta de variables al model: 
+
+```{r,eval=TRUE,echo=TRUE}
+
+# Vins negres
+
+mod2n <- lm(quality ~ alcohol + density + chlorides + volatile.acidity + 
+             total.sulfur.dioxide + fixed.acidity + volatile.acidity + 
+             citric.acid + residual.sugar + free.sulfur.dioxide + pH + sulphates,
+   data = vins_negres_data_train)
+
+summary(mod2n)
+
+# Vins blancs
+
+mod2b <- lm(quality ~ alcohol + density + chlorides + volatile.acidity + 
+             total.sulfur.dioxide + fixed.acidity + volatile.acidity + 
+             citric.acid + residual.sugar + free.sulfur.dioxide + pH + sulphates,
+   data = vins_blancs_data_train)
+
+summary(mod2b)
+
+```
+
+
+Veiem que la millora en $R^2$ no és significativa tot i incorporar totes les variables,
+així que ens quedarem amb els primers models, ja que produeixen un resultat semblant i és molt més senzill.
+
+Una cosa del primer model que no hem comentat, però, és que per a cada color hi ha
+una variable que no és significativa a un nivell del 95%: l'àcid cítric pels vins negres i els clorurs pels vins blancs.
+Així doncs, les en traurem i aquests seran els nostres dos models finals que testejarem. 
+
+```{r,eval=TRUE,echo=TRUE}
+
+# Vins negres
+
+mod3n <- lm(quality ~ alcohol + volatile.acidity + sulphates,
+   data = vins_negres_data_train)
+
+summary(mod3n)
+
+# Vins blancs
+
+mod3b <- lm(quality ~ alcohol + density + volatile.acidity + total.sulfur.dioxide,
+   data = vins_blancs_data_train)
+
+summary(mod3b)
+
+```
+
+Veurem com d'acurats són aquests models fent una predicció sobre el conjunt de test.
+
+```{r,eval=TRUE,echo=TRUE}
+
+pred_blancs <- predict(mod3b, vins_blancs_data_test)
+pred_negres <- predict(mod3n, vins_negres_data_test)
+
+```
+
+La mitjana de l'error relatiu que tenen aquests models és:
+
+```{r,eval=TRUE,echo=TRUE}
+
+err_blancs <- (pred_blancs-vins_blancs_data_test$quality)/vins_blancs_data_test$quality
+err_negres <- (pred_negres-vins_negres_data_test$quality)/vins_negres_data_test$quality
+
+kable(cbind(mean(abs(err_blancs)), mean(abs(err_negres))), 
+  format = 'latex', 
+  booktabs = TRUE, 
+  col.names = c("Error relatiu mitjà vins blancs",
+                "Error relatiu mitjà vins negres")) %>%
+ kableExtra::kable_styling(latex_options = c("hold_position"))
+
+
+```
+
+Tot i que les $R^2$ no van sortir gaire bé, les prediccions sí que són bones, amb
+aproximadament un 10% d'error mitjà. També podem estudiar la distribució dels errors:
+
+```{r,eval=TRUE,echo=TRUE}
+
+hist(err_blancs)
+
+hist(err_negres)
+
+```
+
+Veiem que en el cas dels vins blancs, els errors s'acosten a una normal, excepte per uns
+pocs casos que estan molt allunyats del valor real, cosa que indica que realment les prediccions
+són bones en general. En el cas dels vins negres els errors no s'acosten tant a la normal, però
+no n'hi ha tan d'allunyats del valor real. Aquest model, en general, també té una bona capacitat
+predictiva. 

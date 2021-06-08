@@ -20,7 +20,7 @@ Carpeta **data**:
 * **data/wineQualityReds.csv**: Dades dels vins negres analitzats.
 * **data/wineQualityWhites.csv**: Dades dels vins blancs analitzats.
 
-Finalment, a l'arxiu **pdf/Practica2.pdf** s'hi poden trobar les respostes a les preguntes plantejades.
+Finalment, a l'arxiu **Practica2.pdf** s'hi poden trobar les respostes a les preguntes plantejades.
 
 ## Agraïments
 
